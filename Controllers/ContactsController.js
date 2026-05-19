@@ -134,7 +134,7 @@ const SendEmergencyInfo = async (req, res) => {
             'Content-Type': 'application/json'
           },
           data: {
-            route: 'q', 
+            route: 'v3', 
             message: messageText,
             numbers: number.replace(/\D/g, ''), 
             flash: 0
