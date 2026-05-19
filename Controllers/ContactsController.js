@@ -3,10 +3,19 @@ import { cloudinaryUpload } from "../Utils/Cloudinary.js";
 import fs from "fs";
 import getPublicIdFromUrl from "../Utils/getPublicIdFromUrl.js";
 import { v2 as cloudinary } from "cloudinary";
-import axios from "axios"
+import axios from "axios";
+import nodemailer from "nodemailer";
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 const AddContact = async (req, res) => {
-  const { MobileNo, name, userId } = req.body;
+  const { MobileNo, name, userId, email } = req.body;
 
   if (!MobileNo || !name || !userId) {
     return res.status(400).json({ message: "Please enter all the fields" });
@@ -15,28 +24,20 @@ const AddContact = async (req, res) => {
   let photo;
 
   try {
-
     if (req.file) {
-     // console.log("Received file:", req.file);
-
-
       photo = await cloudinaryUpload(req.file.path);
-     // console.log("Uploaded photo URL:", photo);
-
       fs.unlink(req.file.path, (err) => {
         if (err) console.error("Error deleting local file:", err);
       });
     } else {
-      console.warn("No file provided, using default photo.");
       photo = "https://via.placeholder.com/150";
     }
-
 
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       {
         $push: {
-          contacts: { user: userId, photo, name, MobileNo },
+          contacts: { user: userId, photo, name, MobileNo, email },
         },
       },
       { new: true }
@@ -52,7 +53,6 @@ const AddContact = async (req, res) => {
       message: "Contact added successfully",
       contact: newContact,
     });
-
   } catch (error) {
     console.error("Error in AddContact:", error);
     res.status(500).json({ message: "An error occurred in Adding Contact" });
@@ -67,10 +67,10 @@ const DeleteContact = async (req, res) => {
   }
 
   try {
-
-    const user = await User.findById(userId)
-
-    const ContactToDelete = await user.contacts.find((contact) => contact._id.toString() === contactId)
+    const user = await User.findById(userId);
+    const ContactToDelete = user.contacts.find(
+      (contact) => contact._id.toString() === contactId
+    );
 
     if (!ContactToDelete) {
       return res.status(404).json({ message: "Contact not found" });
@@ -78,13 +78,11 @@ const DeleteContact = async (req, res) => {
 
     if (ContactToDelete.photo) {
       try {
-
         const publicId = getPublicIdFromUrl(ContactToDelete.photo);
         const status = await cloudinary.uploader.destroy(publicId);
-        console.log("deleted Successfully", status)
+        console.log("deleted Successfully", status);
       } catch (cloudinaryError) {
         console.error("Error deleting image from Cloudinary:", cloudinaryError);
-
       }
     }
 
@@ -107,83 +105,96 @@ const DeleteContact = async (req, res) => {
 
 const SendEmergencyInfo = async (req, res) => {
   try {
-    const { contactNumbers, location } = req.body;
-   // console.log('Received data:', { contactNumbers, location });
+    const { contacts, contactNumbers, location } = req.body;
 
-    
-    if (!contactNumbers || !location || !location.latitude || !location.longitude) {
-      return res.status(400).json({
-        message: "Contact numbers and location are required"
-      });
+    if (!location || !location.latitude || !location.longitude) {
+      return res.status(400).json({ message: "Location is required" });
     }
 
-   
     const mapsLink = `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`;
-
-    
     const messageText = `EMERGENCY ALERT! Location: ${mapsLink} Please respond immediately.`;
 
-   
-    const smsPromises = contactNumbers.map(async (number) => {
-      try {
-        const response = await axios({
-          method: 'post',
-          url: 'https://www.fast2sms.com/dev/bulkV2',
-          headers: {
-            'authorization': process.env.FAST2SMS_API_KEY,
-            'Content-Type': 'application/json'
-          },
-          data: {
-            route: 'v3', 
-            message: messageText,
-            numbers: number.replace(/\D/g, ''), 
-            flash: 0
+    // SMS via Fast2SMS
+    const smsResults = [];
+    if (contactNumbers && contactNumbers.length > 0) {
+      const smsPromises = contactNumbers.map(async (number) => {
+        try {
+          const response = await axios({
+            method: "post",
+            url: "https://www.fast2sms.com/dev/bulkV2",
+            headers: {
+              authorization: process.env.FAST2SMS_API_KEY,
+              "Content-Type": "application/json",
+            },
+            data: {
+              route: "v3",
+              message: messageText,
+              numbers: number.replace(/\D/g, ""),
+              flash: 0,
+            },
+          });
+          return { number, status: "success", messageId: response.data.message[0] };
+        } catch (error) {
+          console.error(`Error sending SMS to ${number}:`, error);
+          return { number, status: "failed", error: error.message };
+        }
+      });
+      const results = await Promise.all(smsPromises);
+      smsResults.push(...results);
+    }
+
+    // Email via Nodemailer
+    const emailResults = [];
+    if (contacts && contacts.length > 0) {
+      const emailPromises = contacts
+        .filter((contact) => contact.email)
+        .map(async (contact) => {
+          try {
+            await transporter.sendMail({
+              from: `"I'm Safe App" <${process.env.EMAIL_USER}>`,
+              to: contact.email,
+              subject: "🚨 EMERGENCY ALERT - Immediate Assistance Needed!",
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <div style="background-color: #ff4444; padding: 20px; text-align: center;">
+                    <h1 style="color: white; margin: 0;">🚨 EMERGENCY ALERT</h1>
+                  </div>
+                  <div style="padding: 20px; background-color: #f9f9f9;">
+                    <p style="font-size: 18px;"><strong>${contact.name}</strong>, someone needs your help immediately!</p>
+                    <p>An emergency SOS has been triggered. Here is their current location:</p>
+                    <div style="text-align: center; margin: 20px 0;">
+                      <a href="${mapsLink}" style="background-color: #ff4444; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 16px;">
+                        📍 View Location on Maps
+                      </a>
+                    </div>
+                    <p style="color: #666;">Please respond immediately and check on them!</p>
+                  </div>
+                  <div style="background-color: #333; padding: 10px; text-align: center;">
+                    <p style="color: #999; margin: 0; font-size: 12px;">Sent via I'm Safe - Women Safety App</p>
+                  </div>
+                </div>
+              `,
+            });
+            return { contact: contact.name, status: "success" };
+          } catch (error) {
+            console.error(`Error sending email to ${contact.name}:`, error);
+            return { contact: contact.name, status: "failed", error: error.message };
           }
         });
-
-        return {
-          number,
-          status: 'success',
-          messageId: response.data.message[0]
-        };
-
-      } catch (error) {
-        console.error(`Error sending to ${number}:`, error);
-        return {
-          number,
-          status: 'failed',
-          error: error.message
-        };
-      }
-    });
-
-    
-    const results = await Promise.all(smsPromises);
-
-    
-    const successfulSends = results.filter(result => result.status === 'success');
-
-    if (successfulSends.length === 0) {
-      return res.status(500).json({
-        message: "Failed to send all messages",
-        details: results
-      });
+      const results = await Promise.all(emailPromises);
+      emailResults.push(...results);
     }
 
     return res.status(200).json({
-      message: "Emergency alerts sent",
-      results: results
+      message: "Emergency alerts sent!",
+      smsResults,
+      emailResults,
     });
 
   } catch (error) {
-    console.error('Emergency alert error:', error);
-    return res.status(500).json({
-      message: "Error sending emergency alerts",
-      error: error.message
-    });
+    console.error("Emergency alert error:", error);
+    return res.status(500).json({ message: "Error sending emergency alerts", error: error.message });
   }
 };
-
-
 
 export { AddContact, DeleteContact, SendEmergencyInfo };
