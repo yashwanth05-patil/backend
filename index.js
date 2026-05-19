@@ -1,10 +1,10 @@
 import express from "express"
 import dotenv from "dotenv"
 import cookieParser from "cookie-parser";
-import UserRoutes from "../backend/Routes/UserRoutes.js"
-import ContactRoutes from "../backend/Routes/ContactsRoutes.js"
-import ReviewRoutes from "../backend/Routes/ReviewRoutes.js"
-import ProfileRoutes from "../backend/Routes/ProfileRoutes.js"
+import UserRoutes from "./Routes/UserRoutes.js"
+import ContactRoutes from "./Routes/ContactsRoutes.js"
+import ReviewRoutes from "./Routes/ReviewRoutes.js"
+import ProfileRoutes from "./Routes/ProfileRoutes.js"
 
 import ConnectToDb from "./Utils/ConnectDb.js";
 import cors from "cors"
