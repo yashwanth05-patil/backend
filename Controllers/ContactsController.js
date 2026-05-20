@@ -5,6 +5,9 @@ import getPublicIdFromUrl from "../Utils/getPublicIdFromUrl.js";
 import { v2 as cloudinary } from "cloudinary";
 import axios from "axios";
 import nodemailer from "nodemailer";
+import dns from "dns";
+
+dns.setDefaultResultOrder("ipv4first");
 
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
@@ -14,13 +17,10 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
-  tls: {
-    rejectUnauthorized: false,
-  },
+  requireTLS: true,
   connectionTimeout: 10000,
   greetingTimeout: 10000,
   socketTimeout: 10000,
-  family: 4,
 });
 
 const AddContact = async (req, res) => {
