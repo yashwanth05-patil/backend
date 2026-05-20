@@ -3,25 +3,9 @@ import { cloudinaryUpload } from "../Utils/Cloudinary.js";
 import fs from "fs";
 import getPublicIdFromUrl from "../Utils/getPublicIdFromUrl.js";
 import { v2 as cloudinary } from "cloudinary";
-import axios from "axios";
-import nodemailer from "nodemailer";
-import dns from "dns";
+import { Resend } from "resend";
 
-dns.setDefaultResultOrder("ipv4first");
-
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  requireTLS: true,
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 10000,
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const AddContact = async (req, res) => {
   const { MobileNo, name, userId, email } = req.body;
@@ -126,7 +110,7 @@ const SendEmergencyInfo = async (req, res) => {
     // SMS via Fast2SMS (disabled)
     const smsResults = [];
 
-    // Email via Nodemailer
+    // Email via Resend
     console.log("CONTACTS RECEIVED:", JSON.stringify(contacts, null, 2));
     const emailResults = [];
     if (contacts && contacts.length > 0) {
@@ -138,10 +122,8 @@ const SendEmergencyInfo = async (req, res) => {
         .map(async (contact) => {
           try {
             console.log(`Trying to send email to: ${contact.email}`);
-            await transporter.verify();
-            console.log("SMTP verified");
-            await transporter.sendMail({
-              from: `"I'm Safe App" <${process.env.EMAIL_USER}>`,
+            await resend.emails.send({
+              from: "I'm Safe App <onboarding@resend.dev>",
               to: contact.email,
               subject: "🚨 EMERGENCY ALERT - Immediate Assistance Needed!",
               html: `
