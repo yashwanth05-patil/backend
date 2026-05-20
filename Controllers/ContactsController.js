@@ -12,6 +12,9 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 10000,
 });
 
 const AddContact = async (req, res) => {
@@ -114,34 +117,8 @@ const SendEmergencyInfo = async (req, res) => {
     const mapsLink = `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`;
     const messageText = `EMERGENCY ALERT! Location: ${mapsLink} Please respond immediately.`;
 
-    // SMS via Fast2SMS
+    // SMS via Fast2SMS (disabled)
     const smsResults = [];
-    if (contactNumbers && contactNumbers.length > 0) {
-      const smsPromises = contactNumbers.map(async (number) => {
-        try {
-          const response = await axios({
-            method: "post",
-            url: "https://www.fast2sms.com/dev/bulkV2",
-            headers: {
-              authorization: process.env.FAST2SMS_API_KEY,
-              "Content-Type": "application/json",
-            },
-            data: {
-              route: "v3",
-              message: messageText,
-              numbers: number.replace(/\D/g, ""),
-              flash: 0,
-            },
-          });
-          return { number, status: "success", messageId: response.data.message[0] };
-        } catch (error) {
-          console.error(`Error sending SMS to ${number}:`, error);
-          return { number, status: "failed", error: error.message };
-        }
-      });
-      const results = await Promise.all(smsPromises);
-      smsResults.push(...results);
-    }
 
     // Email via Nodemailer
     console.log("CONTACTS RECEIVED:", JSON.stringify(contacts, null, 2));
