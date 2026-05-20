@@ -144,10 +144,14 @@ const SendEmergencyInfo = async (req, res) => {
     }
 
     // Email via Nodemailer
+    console.log("CONTACTS RECEIVED:", JSON.stringify(contacts, null, 2));
     const emailResults = [];
     if (contacts && contacts.length > 0) {
       const emailPromises = contacts
-        .filter((contact) => contact.email)
+        .filter((contact) => {
+          console.log(`Contact: ${contact.name}, Email: ${contact.email}`);
+          return contact.email;
+        })
         .map(async (contact) => {
           try {
             await transporter.sendMail({
