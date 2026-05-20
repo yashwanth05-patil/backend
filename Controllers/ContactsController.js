@@ -136,6 +136,9 @@ const SendEmergencyInfo = async (req, res) => {
         })
         .map(async (contact) => {
           try {
+            console.log(`Trying to send email to: ${contact.email}`);
+            await transporter.verify();
+            console.log("SMTP verified");
             await transporter.sendMail({
               from: `"I'm Safe App" <${process.env.EMAIL_USER}>`,
               to: contact.email,
@@ -161,9 +164,10 @@ const SendEmergencyInfo = async (req, res) => {
                 </div>
               `,
             });
+            console.log(`Mail sent successfully to ${contact.email}`);
             return { contact: contact.name, status: "success" };
           } catch (error) {
-            console.error(`Error sending email to ${contact.name}:`, error);
+            console.error(`MAIL ERROR for ${contact.name}:`, error.message);
             return { contact: contact.name, status: "failed", error: error.message };
           }
         });
