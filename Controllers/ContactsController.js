@@ -1,5 +1,5 @@
 import User from "../Models/UserModel.js";
-import { cloudinaryUpload } from "../Utils/Cloudinary.js";
+import { cloudinaryUpload, cloudinaryUploadEvidence } from "../Utils/Cloudinary.js";
 import fs from "fs";
 import getPublicIdFromUrl from "../Utils/getPublicIdFromUrl.js";
 import { v2 as cloudinary } from "cloudinary";
@@ -98,7 +98,8 @@ const DeleteContact = async (req, res) => {
 
 const SendEmergencyInfo = async (req, res) => {
   try {
-    const { contacts, contactNumbers, location } = req.body;
+    const { contacts, contactNumbers, location, senderName } = req.body;
+    const displayName = senderName || "Someone";
 
     if (!location || !location.latitude || !location.longitude) {
       return res.status(400).json({ message: "Location is required" });
@@ -122,27 +123,29 @@ const SendEmergencyInfo = async (req, res) => {
         .map(async (contact) => {
           try {
             console.log(`Trying to send email to: ${contact.email}`);
+            console.log('DEBUG location-mail using key prefix:', String(process.env.RESEND_API_KEY || '').slice(0, 8), 'length:', String(process.env.RESEND_API_KEY || '').length);
             await resend.emails.send({
               from: "I'm Safe App <onboarding@resend.dev>",
               to: contact.email,
-              subject: "🚨 EMERGENCY ALERT - Immediate Assistance Needed!",
+              subject: `Emergency - ${displayName} needs help right now`,
               html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                  <div style="background-color: #ff4444; padding: 20px; text-align: center;">
-                    <h1 style="color: white; margin: 0;">🚨 EMERGENCY ALERT</h1>
+                  <div style="background-color: #d32f2f; padding: 20px; text-align: center;">
+                    <h1 style="color: white; margin: 0; font-size: 22px;">EMERGENCY</h1>
                   </div>
-                  <div style="padding: 20px; background-color: #f9f9f9;">
-                    <p style="font-size: 18px;"><strong>${contact.name}</strong>, someone needs your help immediately!</p>
-                    <p>An emergency SOS has been triggered. Here is their current location:</p>
-                    <div style="text-align: center; margin: 20px 0;">
-                      <a href="${mapsLink}" style="background-color: #ff4444; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 16px;">
-                        📍 View Location on Maps
+                  <div style="padding: 24px; background-color: #f9f9f9;">
+                    <p style="font-size: 18px; margin: 0 0 16px;">Hi ${contact.name},</p>
+                    <p style="font-size: 18px; font-weight: bold; margin: 0 0 16px;">This is ${displayName}. I'm in trouble. I need help. This is an emergency.</p>
+                    <p style="font-size: 16px; margin: 0 0 20px;">I triggered my SOS alert. This is my current location:</p>
+                    <div style="text-align: center; margin: 24px 0;">
+                      <a href="${mapsLink}" style="background-color: #d32f2f; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold; display: inline-block;">
+                        View My Location
                       </a>
                     </div>
-                    <p style="color: #666;">Please respond immediately and check on them!</p>
+                    <p style="font-size: 16px; font-weight: bold; color: #d32f2f;">Please call me or come find me right now.</p>
                   </div>
                   <div style="background-color: #333; padding: 10px; text-align: center;">
-                    <p style="color: #999; margin: 0; font-size: 12px;">Sent via I'm Safe - Women Safety App</p>
+                    <p style="color: #999; margin: 0; font-size: 12px;">Sent automatically via I'm Safe - Women Safety App</p>
                   </div>
                 </div>
               `,
@@ -170,4 +173,108 @@ const SendEmergencyInfo = async (req, res) => {
   }
 };
 
-export { AddContact, DeleteContact, SendEmergencyInfo };
+// Accepts a single recorded audio/video clip from the SOS flow, pushes it to
+// Cloudinary, saves the link on the user's evidence array, and returns the URL
+// so the frontend can immediately email it to emergency contacts.
+const UploadEvidence = async (req, res) => {
+  const { userId, type } = req.body;
+
+  if (!userId || !req.file) {
+    return res.status(400).json({ message: "userId and a media file are required" });
+  }
+
+  try {
+    const url = await cloudinaryUploadEvidence(req.file.path);
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error("Error deleting local evidence file:", err);
+    });
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $push: { evidence: { url, type: type === "audio" ? "audio" : "video" } } },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.status(201).json({ message: "Evidence uploaded", url });
+  } catch (error) {
+    console.error("Error in UploadEvidence:", error);
+    res.status(500).json({ message: "An error occurred while uploading evidence" });
+  }
+};
+
+// Sends a short follow-up email once an SOS evidence clip has finished
+// uploading, so contacts get the recording link even though it arrives a
+// little after the initial location alert.
+const SendEvidenceInfo = async (req, res) => {
+  try {
+    const { contacts, evidenceUrl, senderName } = req.body;
+    const displayName = senderName || "Someone";
+
+    if (!evidenceUrl) {
+      return res.status(400).json({ message: "evidenceUrl is required" });
+    }
+
+    const emailResults = [];
+    if (contacts && contacts.length > 0) {
+      const emailPromises = contacts
+        .filter((contact) => contact.email)
+        .map(async (contact) => {
+          try {
+            console.log('DEBUG evidence-mail using key prefix:', String(process.env.RESEND_API_KEY || '').slice(0, 8), 'length:', String(process.env.RESEND_API_KEY || '').length);
+            const { error: sendError } = await resend.emails.send({
+              from: "I'm Safe App <onboarding@resend.dev>",
+              to: contact.email,
+              subject: `Emergency evidence from ${displayName}`,
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <div style="background-color: #d32f2f; padding: 20px; text-align: center;">
+                    <h1 style="color: white; margin: 0; font-size: 22px;">SOS EVIDENCE</h1>
+                  </div>
+                  <div style="padding: 24px; background-color: #f9f9f9;">
+                    <p style="font-size: 18px; margin: 0 0 16px;">Hi ${contact.name},</p>
+                    <p style="font-size: 16px; margin: 0 0 20px;">A recording captured automatically during ${displayName}'s SOS alert is ready:</p>
+                    <div style="text-align: center; margin: 24px 0;">
+                      <a href="${evidenceUrl}" style="background-color: #d32f2f; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold; display: inline-block;">
+                        View Recording
+                      </a>
+                    </div>
+                  </div>
+                  <div style="background-color: #333; padding: 10px; text-align: center;">
+                    <p style="color: #999; margin: 0; font-size: 12px;">Sent automatically via I'm Safe - Women Safety App</p>
+                  </div>
+                </div>
+              `,
+            });
+
+            // The Resend SDK does not always throw on failure - a rejected
+            // send can come back as a resolved promise with an `error`
+            // field instead. Checking only "did this throw?" was the bug:
+            // it reported "success" even when Resend itself refused to
+            // send the mail (e.g. rate limiting two sends back-to-back).
+            if (sendError) {
+              console.error(`Evidence mail rejected for ${contact.name}:`, sendError);
+              return { contact: contact.name, status: "failed", error: sendError.message || JSON.stringify(sendError) };
+            }
+
+            return { contact: contact.name, status: "success" };
+          } catch (error) {
+            console.error(`Evidence mail error for ${contact.name}:`, error.message);
+            return { contact: contact.name, status: "failed", error: error.message };
+          }
+        });
+      const results = await Promise.all(emailPromises);
+      emailResults.push(...results);
+    }
+
+    return res.status(200).json({ message: "Evidence link sent!", emailResults });
+  } catch (error) {
+    console.error("Send evidence error:", error);
+    return res.status(500).json({ message: "Error sending evidence link", error: error.message });
+  }
+};
+
+export { AddContact, DeleteContact, SendEmergencyInfo, UploadEvidence, SendEvidenceInfo };

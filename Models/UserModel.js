@@ -22,6 +22,20 @@ const ReviewSchema = new mongoose.Schema({
     timestamps: true
 });
 
+const EvidenceSchema = new mongoose.Schema({
+    url: {
+        type: String,
+        required: true
+    },
+    type: {
+        type: String, // "video" or "audio"
+        enum: ["video", "audio"],
+        default: "video"
+    }
+}, {
+    timestamps: true
+});
+
 const ContactSchema= mongoose.Schema({
     user: {
         type: mongoose.Schema.Types.ObjectId,
@@ -74,6 +88,10 @@ const UserSchema = mongoose.Schema({
     },
     contacts: {
         type: [ContactSchema],
+        default: []
+    },
+    evidence: {
+        type: [EvidenceSchema],
         default: []
     },
     googleId: {

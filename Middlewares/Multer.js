@@ -27,3 +27,9 @@ export const upload = multer({
   storage: storage,
   limits: { fileSize: 1024 * 1024 * 5 }, // 5MB file size limit
 });
+
+// Separate, larger-limit uploader for SOS audio/video evidence clips.
+export const evidenceUpload = multer({
+  storage: storage,
+  limits: { fileSize: 1024 * 1024 * 50 }, // 50MB, enough for a short webm clip
+});
