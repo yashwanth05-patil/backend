@@ -111,54 +111,95 @@ const SendEmergencyInfo = async (req, res) => {
     // SMS via Fast2SMS (disabled)
     const smsResults = [];
 
-    // Email via Resend
+    // Email via Resend - uses batch sending with permissive validation so a
+    // failure for one contact never prevents the others from being attempted.
     console.log("CONTACTS RECEIVED:", JSON.stringify(contacts, null, 2));
     const emailResults = [];
     if (contacts && contacts.length > 0) {
-      const emailPromises = contacts
-        .filter((contact) => {
-          console.log(`Contact: ${contact.name}, Email: ${contact.email}`);
-          return contact.email;
-        })
-        .map(async (contact) => {
-          try {
-            console.log(`Trying to send email to: ${contact.email}`);
-            console.log('DEBUG location-mail using key prefix:', String(process.env.RESEND_API_KEY || '').slice(0, 8), 'length:', String(process.env.RESEND_API_KEY || '').length);
-            await resend.emails.send({
-              from: "I'm Safe App <onboarding@resend.dev>",
-              to: contact.email,
-              subject: `Emergency - ${displayName} needs help right now`,
-              html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                  <div style="background-color: #d32f2f; padding: 20px; text-align: center;">
-                    <h1 style="color: white; margin: 0; font-size: 22px;">EMERGENCY</h1>
-                  </div>
-                  <div style="padding: 24px; background-color: #f9f9f9;">
-                    <p style="font-size: 18px; margin: 0 0 16px;">Hi ${contact.name},</p>
-                    <p style="font-size: 18px; font-weight: bold; margin: 0 0 16px;">This is ${displayName}. I'm in trouble. I need help. This is an emergency.</p>
-                    <p style="font-size: 16px; margin: 0 0 20px;">I triggered my SOS alert. This is my current location:</p>
-                    <div style="text-align: center; margin: 24px 0;">
-                      <a href="${mapsLink}" style="background-color: #d32f2f; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold; display: inline-block;">
-                        View My Location
-                      </a>
-                    </div>
-                    <p style="font-size: 16px; font-weight: bold; color: #d32f2f;">Please call me or come find me right now.</p>
-                  </div>
-                  <div style="background-color: #333; padding: 10px; text-align: center;">
-                    <p style="color: #999; margin: 0; font-size: 12px;">Sent automatically via I'm Safe - Women Safety App</p>
-                  </div>
+      const emailContacts = contacts.filter((contact) => {
+        console.log(`Contact: ${contact.name}, Email: ${contact.email}`);
+        return contact.email;
+      });
+
+      if (emailContacts.length > 0) {
+        const emailPayload = emailContacts.map((contact) => ({
+          from: "I'm Safe App <onboarding@resend.dev>",
+          to: contact.email,
+          subject: `Emergency - ${displayName} needs help right now`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <div style="background-color: #d32f2f; padding: 20px; text-align: center;">
+                <h1 style="color: white; margin: 0; font-size: 22px;">EMERGENCY</h1>
+              </div>
+              <div style="padding: 24px; background-color: #f9f9f9;">
+                <p style="font-size: 18px; margin: 0 0 16px;">Hi ${contact.name},</p>
+                <p style="font-size: 18px; font-weight: bold; margin: 0 0 16px;">This is ${displayName}. I'm in trouble. I need help. This is an emergency.</p>
+                <p style="font-size: 16px; margin: 0 0 20px;">I triggered my SOS alert. This is my current location:</p>
+                <div style="text-align: center; margin: 24px 0;">
+                  <a href="${mapsLink}" style="background-color: #d32f2f; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold; display: inline-block;">
+                    View My Location
+                  </a>
                 </div>
-              `,
+                <p style="font-size: 16px; font-weight: bold; color: #d32f2f;">Please call me or come find me right now.</p>
+              </div>
+              <div style="background-color: #333; padding: 10px; text-align: center;">
+                <p style="color: #999; margin: 0; font-size: 12px;">Sent automatically via I'm Safe - Women Safety App</p>
+              </div>
+            </div>
+          `,
+        }));
+
+        try {
+          console.log('DEBUG location-mail using key prefix:', String(process.env.RESEND_API_KEY || '').slice(0, 8), 'length:', String(process.env.RESEND_API_KEY || '').length);
+
+          const { data: batchData, error: batchError } = await resend.batch.send(
+            emailPayload
+          );
+
+          // A resolved response can still carry a top-level error (e.g. an
+          // auth failure). Treating it as success would hide the outage.
+          if (batchError) {
+            console.error('Emergency batch mail rejected:', batchError);
+            emailResults.push(
+              ...emailContacts.map((contact) => ({
+                contact: contact.name,
+                status: "failed",
+                error: batchError.message || JSON.stringify(batchError),
+              }))
+            );
+          } else {
+            // In permissive mode the API returns one entry per recipient, so
+            // we can accurately report which emails went out and which failed.
+            (batchData?.data || []).forEach((item, index) => {
+              const contact = emailContacts[index];
+              if (!contact) return;
+              if (item?.error) {
+                console.error(`MAIL ERROR for ${contact.name}:`, item.error.message || item.error);
+                emailResults.push({
+                  contact: contact.name,
+                  status: "failed",
+                  error: item.error.message || JSON.stringify(item.error),
+                });
+              } else {
+                console.log(`Mail sent successfully to ${contact.email}`);
+                emailResults.push({ contact: contact.name, status: "success" });
+              }
             });
-            console.log(`Mail sent successfully to ${contact.email}`);
-            return { contact: contact.name, status: "success" };
-          } catch (error) {
-            console.error(`MAIL ERROR for ${contact.name}:`, error.message);
-            return { contact: contact.name, status: "failed", error: error.message };
           }
-        });
-      const results = await Promise.all(emailPromises);
-      emailResults.push(...results);
+        } catch (error) {
+          console.error("Emergency batch mail error:", error.message);
+          // One error from the batch API means none of these went out, but we
+          // still report each recipient so the caller can see the per-contact
+          // failure instead of silently claiming delivery.
+          emailResults.push(
+            ...emailContacts.map((contact) => ({
+              contact: contact.name,
+              status: "failed",
+              error: error.message,
+            }))
+          );
+        }
+      }
     }
 
     return res.status(200).json({
